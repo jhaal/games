@@ -630,9 +630,6 @@ int main() {
                         p.dir = Dir::None;
                     }
                 }
-                if (p.dir == Dir::None) {
-                    p.dir = Dir::None;
-                }
 
                 // Tunnel wrap
                 if (p.x < -TILE * 0.5f)   p.x = COLS * TILE + TILE * 0.5f;
@@ -760,7 +757,8 @@ int main() {
             game.stateTimer -= dt;
             if (game.stateTimer <= 0.f) {
                 // Respawn (keep dots)
-                game.pac.x = 13.5f * TILE; game.pac.y = 23.f * TILE;
+                game.pac.x = 13.5f * TILE;
+                game.pac.y = 23.5f * TILE;
                 game.pac.dir = Dir::None; game.pac.nextDir = Dir::None;
                 game.frightTime = 0.f; game.ghostEatCombo = 0;
                 for (auto& g : game.ghosts) g.respawn();
