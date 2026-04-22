@@ -14,5 +14,8 @@ $(TARGET): main.cpp
 run: $(TARGET)
 	./$(TARGET)
 
+test: $(TARGET)
+	./$(TARGET) --self-test
+
 clean:
 	rm -f $(TARGET)

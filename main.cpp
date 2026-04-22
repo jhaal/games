@@ -8,6 +8,7 @@
 #include <random>
 #include <optional>
 #include <filesystem>
+#include <iostream>
 #include <limits>
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -153,6 +154,10 @@ float snapAxis(float v) {
 
 bool nearCentre(float v) {
     return std::abs(v - snapAxis(v)) < 3.0f;
+}
+
+bool approxEq(float a, float b, float eps = 0.01f) {
+    return std::abs(a - b) <= eps;
 }
 
 // ─── Drawing helpers ──────────────────────────────────────────────────────────
@@ -415,6 +420,67 @@ sf::Vector2i ghostTarget(const Ghost& g, const Pacman& pac, const Ghost* ghosts)
     }
 }
 
+bool runSelfTests() {
+    bool ok = true;
+    auto check = [&](bool condition, const std::string& name) {
+        if (condition) {
+            std::cout << "PASS: " << name << '\n';
+        } else {
+            std::cerr << "FAIL: " << name << '\n';
+            ok = false;
+        }
+    };
+
+    check(approxEq(snapAxis(23.f * TILE), 23.5f * TILE),
+          "snapAxis recenters positions to tile centers");
+    check(nearCentre(23.5f * TILE), "nearCentre accepts a centered lane position");
+    check(!nearCentre(23.f * TILE), "nearCentre rejects tile-edge positions");
+    check(canMoveDir(13.5f * TILE, 23.5f * TILE, Dir::Left),
+          "Pac-Man can move immediately from the centered spawn tile");
+
+    float blockedX = 1.5f * TILE;
+    float blockedY = 1.5f * TILE;
+    float blockedMove = moveEntity(blockedX, blockedY, Dir::Left, 10.f);
+    check(blockedMove < 10.f && approxEq(blockedX, 27.f) &&
+              canOccupy(blockedX, blockedY) && !canAdvance(blockedX, blockedY, Dir::Left, 1.f),
+          "moveEntity stops cleanly at wall boundaries");
+
+    Ghost deadGhost;
+    deadGhost.id = 0;
+    deadGhost.x = 13.5f * TILE;
+    deadGhost.y = 11.5f * TILE;
+    deadGhost.dir = Dir::Up;
+    deadGhost.mode = GhostMode::Dead;
+    check(bestDirToward(deadGhost.x, deadGhost.y, deadGhost.dir, GHOST_HOME_TILE, true, true) == Dir::Down,
+          "dead ghosts can reverse toward home");
+
+    Ghost respawnGhost;
+    respawnGhost.id = 2;
+    respawnGhost.respawn();
+    check(approxEq(respawnGhost.x, 11.5f * TILE) && approxEq(respawnGhost.y, 14.5f * TILE),
+          "ghost respawn restores centered starting coordinates");
+
+    Ghost homeGhost;
+    homeGhost.id = 1;
+    homeGhost.mode = GhostMode::Dead;
+    homeGhost.x = tileCenter(GHOST_HOME_TILE.x);
+    homeGhost.y = tileCenter(GHOST_HOME_TILE.y);
+    bool atCentreX = nearCentre(homeGhost.x);
+    bool atCentreY = nearCentre(homeGhost.y);
+    if (homeGhost.mode == GhostMode::Dead && atCentreX && atCentreY &&
+        homeGhost.tilePos() == GHOST_HOME_TILE) {
+        homeGhost.x = tileCenter(GHOST_HOME_TILE.x);
+        homeGhost.y = tileCenter(GHOST_HOME_TILE.y);
+        homeGhost.mode = GhostMode::Scatter;
+        homeGhost.scatterTimer = 6.f;
+        homeGhost.dir = Dir::Left;
+    }
+    check(homeGhost.mode == GhostMode::Scatter && homeGhost.dir == Dir::Left,
+          "dead ghosts revive once they reach the home tile");
+
+    return ok;
+}
+
 // ─── Sound generation (no external files needed) ─────────────────────────────
 // Generates a PCM tone that sweeps from f1 to f2 Hz over `secs` seconds.
 sf::SoundBuffer makeTone(float f1, float f2, float secs, float vol = 0.35f) {
@@ -488,7 +554,11 @@ struct Sounds {
 };
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-int main() {
+int main(int argc, char** argv) {
+    if (argc > 1 && std::string(argv[1]) == "--self-test") {
+        return runSelfTests() ? 0 : 1;
+    }
+
     sf::RenderWindow window(sf::VideoMode({(unsigned)WIN_W, (unsigned)WIN_H}), "Pac-Man");
     window.setFramerateLimit(60);
 
