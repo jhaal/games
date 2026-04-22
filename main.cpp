@@ -642,8 +642,9 @@ int main() {
                 }
 
                 // Eat dots
-                int tc = (int)(p.x / TILE);
-                int tr = (int)(p.y / TILE);
+                sf::Vector2i pacTile = p.tilePos();
+                int tc = pacTile.x;
+                int tr = pacTile.y;
                 if (tc >= 0 && tc < COLS && tr >= 0 && tr < ROWS) {
                     int& cell = game.dots[tr][tc];
                     if (cell == 2) {
