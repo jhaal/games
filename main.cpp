@@ -21,6 +21,7 @@ const float PI    = 3.14159265f;
 const float TILE_CENTER = TILE * 0.5f;
 const float ENTITY_RADIUS = 7.f;
 const sf::Vector2i GHOST_HOME_TILE{13, 13};
+const sf::Vector2i GHOST_EXIT_TILE{13, 11};
 
 // ─── Map ─────────────────────────────────────────────────────────────────────
 // 0=empty  1=wall  2=dot  3=power-pellet  4=ghost-door
@@ -154,6 +155,10 @@ float snapAxis(float v) {
 
 bool nearCentre(float v) {
     return std::abs(v - snapAxis(v)) < 3.0f;
+}
+
+bool atTileCentre(float v, float eps = 0.5f) {
+    return std::abs(v - snapAxis(v)) < eps;
 }
 
 bool approxEq(float a, float b, float eps = 0.01f) {
@@ -420,6 +425,63 @@ sf::Vector2i ghostTarget(const Ghost& g, const Pacman& pac, const Ghost* ghosts)
     }
 }
 
+bool isGhostHouseTile(sf::Vector2i tile) {
+    return tile.y >= 13 && tile.y <= 15 && tile.x >= 11 && tile.x <= 16;
+}
+
+void updateGhosts(Game& game, float dt, std::mt19937& rng) {
+    for (auto& g : game.ghosts) {
+        if (g.mode == GhostMode::Scatter) {
+            g.scatterTimer -= dt;
+            if (g.scatterTimer <= 0.f) {
+                g.mode = GhostMode::Chase;
+            }
+        }
+
+        float spd = g.speed();
+        bool atCentreX = atTileCentre(g.x);
+        bool atCentreY = atTileCentre(g.y);
+
+        if (g.mode == GhostMode::Dead && atCentreX && atCentreY &&
+            g.tilePos() == GHOST_HOME_TILE) {
+            g.x = tileCenter(GHOST_HOME_TILE.x);
+            g.y = tileCenter(GHOST_HOME_TILE.y);
+            g.mode = GhostMode::Scatter;
+            g.scatterTimer = 6.f;
+            g.dir = Dir::Left;
+        }
+
+        if (atCentreX && atCentreY) {
+            g.x = snapAxis(g.x);
+            g.y = snapAxis(g.y);
+
+            sf::Vector2i tile = g.tilePos();
+            sf::Vector2i target;
+            bool allowReverse = (g.mode == GhostMode::Dead);
+
+            if (g.mode != GhostMode::Dead && isGhostHouseTile(tile)) {
+                target = GHOST_EXIT_TILE;
+            } else if (g.mode == GhostMode::Scatter || g.mode == GhostMode::Dead) {
+                target = (g.mode == GhostMode::Dead) ? GHOST_HOME_TILE : g.scatterTarget;
+            } else if (g.mode == GhostMode::Frightened) {
+                g.dir = randomDir(g.x, g.y, g.dir, rng);
+                goto moveGhost;
+            } else {
+                target = ghostTarget(g, game.pac, game.ghosts);
+            }
+
+            g.dir = bestDirToward(g.x, g.y, g.dir, target, true, allowReverse);
+        }
+
+        moveGhost:
+        {
+            moveEntity(g.x, g.y, g.dir, spd * dt, true);
+            if (g.x < -TILE * 0.5f)   g.x = COLS * TILE + TILE * 0.5f;
+            if (g.x > COLS * TILE + TILE * 0.5f) g.x = -TILE * 0.5f;
+        }
+    }
+}
+
 bool runSelfTests() {
     bool ok = true;
     auto check = [&](bool condition, const std::string& name) {
@@ -435,6 +497,7 @@ bool runSelfTests() {
           "snapAxis recenters positions to tile centers");
     check(nearCentre(23.5f * TILE), "nearCentre accepts a centered lane position");
     check(!nearCentre(23.f * TILE), "nearCentre rejects tile-edge positions");
+    check(atTileCentre(23.5f * TILE), "atTileCentre accepts the exact tile center");
     check(canMoveDir(13.5f * TILE, 23.5f * TILE, Dir::Left),
           "Pac-Man can move immediately from the centered spawn tile");
 
@@ -459,14 +522,22 @@ bool runSelfTests() {
     respawnGhost.respawn();
     check(approxEq(respawnGhost.x, 11.5f * TILE) && approxEq(respawnGhost.y, 14.5f * TILE),
           "ghost respawn restores centered starting coordinates");
+    check(canAdvance(13.5f * TILE, 11.5f * TILE, Dir::Down, 1.f, true),
+          "Blinky can step toward the door from spawn");
+    check(canAdvance(13.5f * TILE, 14.5f * TILE, Dir::Up, 1.f, true),
+          "Pinky can step upward from the house");
+    check(canAdvance(11.5f * TILE, 14.5f * TILE, Dir::Up, 1.f, true),
+          "Inky can step upward from the house");
+    check(canAdvance(15.5f * TILE, 14.5f * TILE, Dir::Up, 1.f, true),
+          "Clyde can step upward from the house");
 
     Ghost homeGhost;
     homeGhost.id = 1;
     homeGhost.mode = GhostMode::Dead;
     homeGhost.x = tileCenter(GHOST_HOME_TILE.x);
     homeGhost.y = tileCenter(GHOST_HOME_TILE.y);
-    bool atCentreX = nearCentre(homeGhost.x);
-    bool atCentreY = nearCentre(homeGhost.y);
+    bool atCentreX = atTileCentre(homeGhost.x);
+    bool atCentreY = atTileCentre(homeGhost.y);
     if (homeGhost.mode == GhostMode::Dead && atCentreX && atCentreY &&
         homeGhost.tilePos() == GHOST_HOME_TILE) {
         homeGhost.x = tileCenter(GHOST_HOME_TILE.x);
@@ -477,6 +548,37 @@ bool runSelfTests() {
     }
     check(homeGhost.mode == GhostMode::Scatter && homeGhost.dir == Dir::Left,
           "dead ghosts revive once they reach the home tile");
+
+    Game game;
+    game.reset(true);
+    std::mt19937 simRng(42);
+    std::array<bool, 4> leftHouse = {false, false, false, false};
+    std::array<sf::Vector2i, 4> minTile;
+    std::array<sf::Vector2i, 4> maxTile;
+    for (int i = 0; i < 4; ++i) {
+        minTile[i] = game.ghosts[i].tilePos();
+        maxTile[i] = game.ghosts[i].tilePos();
+    }
+    for (int step = 0; step < 10 * 60; ++step) {
+        updateGhosts(game, 1.f / 60.f, simRng);
+        for (int i = 0; i < 4; ++i) {
+            sf::Vector2i tile = game.ghosts[i].tilePos();
+            minTile[i].x = std::min(minTile[i].x, tile.x);
+            minTile[i].y = std::min(minTile[i].y, tile.y);
+            maxTile[i].x = std::max(maxTile[i].x, tile.x);
+            maxTile[i].y = std::max(maxTile[i].y, tile.y);
+            if (!isGhostHouseTile(tile) && tile != GHOST_HOME_TILE) {
+                leftHouse[i] = true;
+            }
+        }
+    }
+    check(leftHouse[1] && leftHouse[2] && leftHouse[3],
+          "house ghosts leave the ghost house");
+    check((maxTile[0].x - minTile[0].x >= 3 || maxTile[0].y - minTile[0].y >= 3) &&
+              (maxTile[1].x - minTile[1].x >= 3 || maxTile[1].y - minTile[1].y >= 3) &&
+              (maxTile[2].x - minTile[2].x >= 3 || maxTile[2].y - minTile[2].y >= 3) &&
+              (maxTile[3].x - minTile[3].x >= 3 || maxTile[3].y - minTile[3].y >= 3),
+          "ghosts traverse several maze tiles after leaving the house");
 
     return ok;
 }
@@ -747,54 +849,7 @@ int main(int argc, char** argv) {
             }
 
             // ── Ghost movement ────────────────────────────────────────────────
-            for (auto& g : game.ghosts) {
-                // Update mode timers
-                if (g.mode == GhostMode::Scatter) {
-                    g.scatterTimer -= dt;
-                    if (g.scatterTimer <= 0.f) {
-                        g.mode = GhostMode::Chase;
-                    }
-                }
-
-                float spd = g.speed();
-                bool atCentreX = nearCentre(g.x);
-                bool atCentreY = nearCentre(g.y);
-
-                if (g.mode == GhostMode::Dead && atCentreX && atCentreY &&
-                    g.tilePos() == GHOST_HOME_TILE) {
-                    g.x = tileCenter(GHOST_HOME_TILE.x);
-                    g.y = tileCenter(GHOST_HOME_TILE.y);
-                    g.mode = GhostMode::Scatter;
-                    g.scatterTimer = 6.f;
-                    g.dir = Dir::Left;
-                }
-
-                // Choose new direction at intersections
-                if (atCentreX && atCentreY) {
-                    g.x = snapAxis(g.x);
-                    g.y = snapAxis(g.y);
-
-                    sf::Vector2i target;
-                    if (g.mode == GhostMode::Scatter || g.mode == GhostMode::Dead) {
-                        target = (g.mode == GhostMode::Dead) ?
-                            GHOST_HOME_TILE : g.scatterTarget;
-                    } else if (g.mode == GhostMode::Frightened) {
-                        g.dir = randomDir(g.x, g.y, g.dir, rng);
-                        goto moveGhost;
-                    } else {
-                        target = ghostTarget(g, game.pac, game.ghosts);
-                    }
-                    g.dir = bestDirToward(g.x, g.y, g.dir, target, true,
-                                          g.mode == GhostMode::Dead);
-                }
-                moveGhost:
-                {
-                    moveEntity(g.x, g.y, g.dir, spd * dt, true);
-                    // Tunnel wrap
-                    if (g.x < -TILE * 0.5f)   g.x = COLS * TILE + TILE * 0.5f;
-                    if (g.x > COLS * TILE + TILE * 0.5f) g.x = -TILE * 0.5f;
-                }
-            }
+            updateGhosts(game, dt, rng);
 
             // ── Collision: pac vs ghosts ───────────────────────────────────────
             for (auto& g : game.ghosts) {
