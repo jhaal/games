@@ -64,15 +64,22 @@ Pos step(Pos p, Dir dir) {
     return p;
 }
 
-char dirGlyph(Dir dir) {
-    switch (dir) {
-        case Dir::Up:    return '^';
-        case Dir::Down:  return 'v';
-        case Dir::Left:  return '<';
-        case Dir::Right: return '>';
-    }
-    return '^';
+std::string colorize(const std::string& text, const std::string& code) {
+    return "\033[" + code + "m" + text + "\033[0m";
 }
+
+std::string directionalIcon(Dir dir, bool player) {
+    switch (dir) {
+        case Dir::Up:    return colorize(player ? "▲ " : "△ ", player ? "1;32" : "1;31");
+        case Dir::Down:  return colorize(player ? "▼ " : "▽ ", player ? "1;32" : "1;31");
+        case Dir::Left:  return colorize(player ? "◀ " : "◁ ", player ? "1;32" : "1;31");
+        case Dir::Right: return colorize(player ? "▶ " : "▷ ", player ? "1;32" : "1;31");
+    }
+    return colorize(player ? "▲ " : "△ ", player ? "1;32" : "1;31");
+}
+
+std::string targetIcon() { return colorize("◎ ", "1;36"); }
+std::string bulletIcon(bool fromPlayer) { return colorize("• ", fromPlayer ? "1;33" : "1;35"); }
 
 Dir opposite(Dir dir) {
     switch (dir) {
@@ -131,15 +138,15 @@ struct Board {
         return tiles[p.y][p.x] == Tile::Steel;
     }
 
-    char glyph(Pos p) const {
+    std::string icon(Pos p) const {
         switch (tiles[p.y][p.x]) {
-            case Tile::Empty: return ' ';
-            case Tile::Brick: return '%';
-            case Tile::Steel: return '#';
-            case Tile::Hedge: return '&';
-            case Tile::Base:  return 'A';
+            case Tile::Empty: return "  ";
+            case Tile::Brick: return colorize("▓▓", "38;5;130");
+            case Tile::Steel: return colorize("██", "1;37");
+            case Tile::Hedge: return colorize("♣ ", "1;32");
+            case Tile::Base:  return colorize("⌂ ", "1;33");
         }
-        return ' ';
+        return "  ";
     }
 };
 
@@ -361,20 +368,36 @@ void updateGame(Game& game, char command) {
 }
 
 std::string render(const Game& game) {
-    std::array<std::string, ROWS> frame{};
+    std::array<std::array<std::string, COLS>, ROWS> frame{};
     for (int y = 0; y < ROWS; ++y) {
-        frame[y].resize(COLS);
-        for (int x = 0; x < COLS; ++x) frame[y][x] = game.board.glyph({x, y});
+        for (int x = 0; x < COLS; ++x) frame[y][x] = game.board.icon({x, y});
     }
-    for (const auto& bullet : game.bullets) if (bullet.alive && game.board.inside(bullet.pos)) frame[bullet.pos.y][bullet.pos.x] = '*';
-    for (const auto& enemy : game.enemies) if (enemy.alive) frame[enemy.pos.y][enemy.pos.x] = 'E';
-    if (game.player.alive) frame[game.player.pos.y][game.player.pos.x] = dirGlyph(game.player.dir);
+
+    const bool showActors = game.state != State::Menu;
+    const Pos target = step(game.player.pos, game.player.dir);
+    if (showActors && game.player.alive && game.board.inside(target) && !game.board.blocksMovement(target)) {
+        frame[target.y][target.x] = targetIcon();
+    }
+    for (const auto& bullet : game.bullets) {
+        if (showActors && bullet.alive && game.board.inside(bullet.pos)) frame[bullet.pos.y][bullet.pos.x] = bulletIcon(bullet.fromPlayer);
+    }
+    for (const auto& enemy : game.enemies) {
+        if (showActors && enemy.alive) frame[enemy.pos.y][enemy.pos.x] = directionalIcon(enemy.dir, false);
+    }
+    if (showActors && game.player.alive) frame[game.player.pos.y][game.player.pos.x] = directionalIcon(game.player.dir, true);
 
     std::string out;
     out += "TANKS  Score: " + std::to_string(game.score) + "  Lives: " + std::to_string(game.lives) + "  Wave: " + std::to_string(game.wave) + "\n";
     out += "Controls: W/A/S/D move and aim, F fire, P start/restart, Q quit\n";
-    for (const auto& row : frame) out += row + '\n';
-    if (game.state == State::Menu) out += "Press P to start. Protect the base (A) and destroy every enemy tank.\n";
+    out += "Legend: " + directionalIcon(Dir::Up, true) + "Player tank  " + directionalIcon(Dir::Down, false) + "Enemy tank  "
+         + targetIcon() + "Target  " + bulletIcon(true) + "Shell  "
+         + colorize("⌂ ", "1;33") + "Base  " + colorize("▓▓", "38;5;130") + "Brick  "
+         + colorize("██", "1;37") + "Steel  " + colorize("♣ ", "1;32") + "Hedge\n";
+    for (const auto& row : frame) {
+        for (const auto& cell : row) out += cell;
+        out += '\n';
+    }
+    if (game.state == State::Menu) out += "Press P to start. Protect the base icon and destroy every enemy tank.\n";
     if (game.state == State::WaveClear) out += "Wave clear! Press any command to continue.\n";
     if (game.state == State::GameOver) out += "Game over. Press P to restart or Q to quit.\n";
     return out;
@@ -400,6 +423,12 @@ bool selfTest() {
     expect(game.enemies.size() == 4, "wave one spawns four enemies");
     expect(lineOfSight(game.board, {1, 1}, {13, 1}), "open row has line of sight");
     expect(!lineOfSight(game.board, {1, 1}, {20, 1}), "steel column blocks line of sight");
+    const std::string view = render(game);
+    expect(view.find("Legend:") != std::string::npos, "render includes visual icon legend");
+    expect(view.find("⌂") != std::string::npos, "render shows base icon");
+    expect(view.find("◎") != std::string::npos, "render shows aiming target icon");
+    expect(view.find("▲") != std::string::npos, "render shows player tank icon");
+    expect(view.find("▽") != std::string::npos, "render shows enemy tank icon");
     game.player.dir = Dir::Right;
     game.player.reload = 0;
     fire(game, game.player, true);
