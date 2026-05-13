@@ -1,1062 +1,428 @@
-#include <SFML/Graphics.hpp>
-#include <SFML/Audio.hpp>
-#include <array>
-#include <vector>
-#include <cmath>
-#include <string>
 #include <algorithm>
-#include <random>
-#include <optional>
-#include <filesystem>
+#include <array>
+#include <cmath>
+#include <cctype>
 #include <iostream>
-#include <limits>
+#include <random>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
-// ─── Constants ───────────────────────────────────────────────────────────────
-const int TILE    = 20;
-const int COLS    = 28;
-const int ROWS    = 31;
-const int WIN_W   = COLS * TILE;          // 560
-const int WIN_H   = ROWS * TILE + 60;     // 680  (60px UI bar at bottom)
-const float PI    = 3.14159265f;
-const float TILE_CENTER = TILE * 0.5f;
-const float ENTITY_RADIUS = 7.f;
-const sf::Vector2i GHOST_HOME_TILE{13, 13};
-const sf::Vector2i GHOST_EXIT_TILE{13, 11};
+namespace {
 
-// ─── Map ─────────────────────────────────────────────────────────────────────
-// 0=empty  1=wall  2=dot  3=power-pellet  4=ghost-door
-const int MAP[ROWS][COLS] = {
-    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-    {1,2,2,2,2,2,2,2,2,2,2,2,2,1,1,2,2,2,2,2,2,2,2,2,2,2,2,1},
-    {1,2,1,1,1,1,2,1,1,1,1,1,2,1,1,2,1,1,1,1,1,2,1,1,1,1,2,1},
-    {1,3,1,1,1,1,2,1,1,1,1,1,2,1,1,2,1,1,1,1,1,2,1,1,1,1,3,1},
-    {1,2,1,1,1,1,2,1,1,1,1,1,2,1,1,2,1,1,1,1,1,2,1,1,1,1,2,1},
-    {1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1},
-    {1,2,1,1,1,1,2,1,1,2,1,1,1,1,1,1,1,1,2,1,1,2,1,1,1,1,2,1},
-    {1,2,1,1,1,1,2,1,1,2,1,1,1,1,1,1,1,1,2,1,1,2,1,1,1,1,2,1},
-    {1,2,2,2,2,2,2,1,1,2,2,2,2,1,1,2,2,2,2,1,1,2,2,2,2,2,2,1},
-    {1,1,1,1,1,1,2,1,1,1,1,1,0,1,1,0,1,1,1,1,1,2,1,1,1,1,1,1},
-    {1,1,1,1,1,1,2,1,1,1,1,1,0,1,1,0,1,1,1,1,1,2,1,1,1,1,1,1},
-    {1,1,1,1,1,1,2,1,1,0,0,0,0,0,0,0,0,0,0,1,1,2,1,1,1,1,1,1},
-    {1,1,1,1,1,1,2,1,1,0,1,1,1,4,4,1,1,1,0,1,1,2,1,1,1,1,1,1},
-    {1,1,1,1,1,1,2,1,1,0,1,0,0,0,0,0,0,1,0,1,1,2,1,1,1,1,1,1},
-    {0,0,0,0,0,0,2,0,0,0,1,0,0,0,0,0,0,1,0,0,0,2,0,0,0,0,0,0},
-    {1,1,1,1,1,1,2,1,1,0,1,0,0,0,0,0,0,1,0,1,1,2,1,1,1,1,1,1},
-    {1,1,1,1,1,1,2,1,1,0,1,1,1,1,1,1,1,1,0,1,1,2,1,1,1,1,1,1},
-    {1,1,1,1,1,1,2,1,1,0,0,0,0,0,0,0,0,0,0,1,1,2,1,1,1,1,1,1},
-    {1,1,1,1,1,1,2,1,1,0,1,1,1,1,1,1,1,1,0,1,1,2,1,1,1,1,1,1},
-    {1,1,1,1,1,1,2,1,1,0,1,1,1,1,1,1,1,1,0,1,1,2,1,1,1,1,1,1},
-    {1,2,2,2,2,2,2,2,2,2,2,2,2,1,1,2,2,2,2,2,2,2,2,2,2,2,2,1},
-    {1,2,1,1,1,1,2,1,1,1,1,1,2,1,1,2,1,1,1,1,1,2,1,1,1,1,2,1},
-    {1,2,1,1,1,1,2,1,1,1,1,1,2,1,1,2,1,1,1,1,1,2,1,1,1,1,2,1},
-    {1,3,2,2,1,1,2,2,2,2,2,2,2,0,0,2,2,2,2,2,2,2,1,1,2,2,3,1},
-    {1,1,1,2,1,1,2,1,1,2,1,1,1,1,1,1,1,1,2,1,1,2,1,1,2,1,1,1},
-    {1,1,1,2,1,1,2,1,1,2,1,1,1,1,1,1,1,1,2,1,1,2,1,1,2,1,1,1},
-    {1,2,2,2,2,2,2,1,1,2,2,2,2,1,1,2,2,2,2,1,1,2,2,2,2,2,2,1},
-    {1,2,1,1,1,1,1,1,1,1,1,1,2,1,1,2,1,1,1,1,1,1,1,1,1,1,2,1},
-    {1,2,1,1,1,1,1,1,1,1,1,1,2,1,1,2,1,1,1,1,1,1,1,1,1,1,2,1},
-    {1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1},
-    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+constexpr int COLS = 31;
+constexpr int ROWS = 21;
+constexpr int BASE_X = COLS / 2;
+constexpr int BASE_Y = ROWS - 2;
+constexpr int PLAYER_START_X = BASE_X - 2;
+constexpr int PLAYER_START_Y = BASE_Y;
+
+const std::array<std::string, ROWS> LEVEL = {
+    "###############################",
+    "#.............#...............#",
+    "#..BB..S......#......S..BB....#",
+    "#..BB.........#.........BB....#",
+    "#......BBBBBBBBBBBBB..........#",
+    "#..S.....................S....#",
+    "#......#.............#........#",
+    "#..BB..#..BBBBBBBBB..#..BB....#",
+    "#......#.............#........#",
+    "#............SS...............#",
+    "#..............SS.............#",
+    "#......#.............#........#",
+    "#..BB..#..BBBBBBBBB..#..BB....#",
+    "#......#.............#........#",
+    "#..S.....................S....#",
+    "#.........BBBBBBBBBBBBB.......#",
+    "#....BB.........#.........BB..#",
+    "#....BB..S......#......S..BB..#",
+    "#.............BHAB............#",
+    "#..............BBB............#",
+    "###############################",
 };
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-enum class Dir { None, Left, Right, Up, Down };
+static_assert(LEVEL.size() == ROWS, "level row count must match ROWS");
 
-sf::Vector2f dirVec(Dir d) {
-    switch (d) {
-        case Dir::Left:  return {-1,  0};
-        case Dir::Right: return { 1,  0};
-        case Dir::Up:    return { 0, -1};
-        case Dir::Down:  return { 0,  1};
-        default:         return { 0,  0};
+enum class Dir { Up, Down, Left, Right };
+enum class Tile { Empty, Brick, Steel, Hedge, Base };
+enum class State { Menu, Playing, WaveClear, GameOver };
+
+struct Pos {
+    int x = 0;
+    int y = 0;
+};
+
+bool operator==(Pos a, Pos b) { return a.x == b.x && a.y == b.y; }
+
+Pos step(Pos p, Dir dir) {
+    switch (dir) {
+        case Dir::Up:    return {p.x, p.y - 1};
+        case Dir::Down:  return {p.x, p.y + 1};
+        case Dir::Left:  return {p.x - 1, p.y};
+        case Dir::Right: return {p.x + 1, p.y};
     }
+    return p;
 }
 
-Dir opposite(Dir d) {
-    switch (d) {
-        case Dir::Left:  return Dir::Right;
-        case Dir::Right: return Dir::Left;
+char dirGlyph(Dir dir) {
+    switch (dir) {
+        case Dir::Up:    return '^';
+        case Dir::Down:  return 'v';
+        case Dir::Left:  return '<';
+        case Dir::Right: return '>';
+    }
+    return '^';
+}
+
+Dir opposite(Dir dir) {
+    switch (dir) {
         case Dir::Up:    return Dir::Down;
         case Dir::Down:  return Dir::Up;
-        default:         return Dir::None;
+        case Dir::Left:  return Dir::Right;
+        case Dir::Right: return Dir::Left;
     }
+    return Dir::Down;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-int wrapCol(int col) {
-    if (col < 0) return COLS - 1;
-    if (col >= COLS) return 0;
-    return col;
-}
+struct Board {
+    std::array<std::array<Tile, COLS>, ROWS> tiles{};
 
-int tileIndex(float pos) {
-    return static_cast<int>(std::floor(pos / TILE));
-}
+    Board() { reset(); }
 
-float tileCenter(int index) {
-    return index * TILE + TILE_CENTER;
-}
-
-bool isWall(int col, int row, bool ghostMode = false) {
-    if (row < 0 || row >= ROWS) return true;
-    col = wrapCol(col);
-    int t = MAP[row][col];
-    if (t == 1) return true;
-    if (!ghostMode && t == 4) return true; // ghost door blocks pacman
-    return false;
-}
-
-bool canOccupy(float px, float py, bool ghostMode = false, float radius = ENTITY_RADIUS) {
-    auto blocked = [&](float x, float y) {
-        int c = wrapCol(tileIndex(x));
-        int r = tileIndex(y);
-        return isWall(c, r, ghostMode);
-    };
-
-    return !blocked(px - radius, py - radius)
-        && !blocked(px + radius, py - radius)
-        && !blocked(px - radius, py + radius)
-        && !blocked(px + radius, py + radius);
-}
-
-bool canAdvance(float px, float py, Dir d, float distance, bool ghostMode = false,
-                float radius = ENTITY_RADIUS) {
-    auto dv = dirVec(d);
-    return canOccupy(px + dv.x * distance, py + dv.y * distance, ghostMode, radius);
-}
-
-bool canMoveDir(float px, float py, Dir d, bool ghostMode = false,
-                float radius = ENTITY_RADIUS) {
-    return canAdvance(px, py, d, TILE_CENTER + 1.f, ghostMode, radius);
-}
-
-float moveEntity(float& px, float& py, Dir d, float distance, bool ghostMode = false,
-                 float radius = ENTITY_RADIUS) {
-    if (d == Dir::None || distance <= 0.f) return 0.f;
-
-    auto dv = dirVec(d);
-    float moved = 0.f;
-    float remaining = distance;
-    while (remaining > 0.f) {
-        float step = std::min(1.f, remaining);
-        if (!canAdvance(px, py, d, step, ghostMode, radius)) break;
-        px += dv.x * step;
-        py += dv.y * step;
-        moved += step;
-        remaining -= step;
-    }
-    return moved;
-}
-
-// Snap to grid centre if within threshold
-float snapAxis(float v) {
-    return std::round((v - TILE_CENTER) / TILE) * TILE + TILE_CENTER;
-}
-
-bool nearCentre(float v) {
-    return std::abs(v - snapAxis(v)) < 3.0f;
-}
-
-bool atTileCentre(float v, float eps = 0.5f) {
-    return std::abs(v - snapAxis(v)) < eps;
-}
-
-bool approxEq(float a, float b, float eps = 0.01f) {
-    return std::abs(a - b) <= eps;
-}
-
-// ─── Drawing helpers ──────────────────────────────────────────────────────────
-
-// Draw pac-man as a pie shape
-void drawPacman(sf::RenderTarget& rt, float x, float y, float angle, float mouthAngle) {
-    const int POINTS = 30;
-    sf::VertexArray va(sf::PrimitiveType::TriangleFan, POINTS + 2);
-    va[0].position  = {x, y};
-    va[0].color     = sf::Color::Yellow;
-    float startA = angle + mouthAngle;
-    float endA   = angle + (2.f * PI - mouthAngle);
-    float r = 9.f;
-    for (int i = 0; i <= POINTS; ++i) {
-        float a = startA + (endA - startA) * ((float)i / POINTS);
-        va[i + 1].position = {x + r * std::cos(a), y + r * std::sin(a)};
-        va[i + 1].color    = sf::Color::Yellow;
-    }
-    rt.draw(va);
-}
-
-// Draw ghost body
-void drawGhost(sf::RenderTarget& rt, float x, float y, sf::Color col, bool frightened, float time) {
-    sf::Color body = frightened ? sf::Color(0, 0, 200) : col;
-    if (frightened && std::fmod(time, 0.5f) < 0.25f && time < 2.f)
-        body = sf::Color::White; // flash warning
-
-    float r = 9.f;
-    // Upper dome
-    const int DOME = 16;
-    sf::VertexArray dome(sf::PrimitiveType::TriangleFan, DOME + 2);
-    dome[0].position = {x, y};
-    dome[0].color = body;
-    for (int i = 0; i <= DOME; ++i) {
-        float a = PI + PI * ((float)i / DOME);
-        dome[i + 1].position = {x + r * std::cos(a), y + r * std::sin(a)};
-        dome[i + 1].color = body;
-    }
-    rt.draw(dome);
-
-    // Rectangle body
-    sf::RectangleShape rect({r * 2.f, r});
-    rect.setOrigin({r, 0.f});
-    rect.setPosition({x, y});
-    rect.setFillColor(body);
-    rt.draw(rect);
-
-    // Wavy bottom
-    float bx = x - r;
-    float by = y + r;
-    const int WAVES = 3;
-    float ww = (r * 2.f) / WAVES;
-    for (int i = 0; i < WAVES; ++i) {
-        sf::CircleShape bump(ww * 0.5f);
-        bump.setFillColor(sf::Color(0, 0, 0));
-        bump.setPosition({bx + i * ww, by - ww * 0.5f});
-        rt.draw(bump);
+    void reset() {
+        for (int y = 0; y < ROWS; ++y) {
+            if (static_cast<int>(LEVEL[y].size()) != COLS) {
+                throw std::runtime_error("every level row must be exactly COLS characters wide");
+            }
+            for (int x = 0; x < COLS; ++x) {
+                switch (LEVEL[y][x]) {
+                    case '#':
+                    case 'S': tiles[y][x] = Tile::Steel; break;
+                    case 'B': tiles[y][x] = Tile::Brick; break;
+                    case 'H': tiles[y][x] = Tile::Hedge; break;
+                    case 'A': tiles[y][x] = Tile::Base; break;
+                    default:  tiles[y][x] = Tile::Empty; break;
+                }
+            }
+        }
     }
 
-    if (!frightened) {
-        // Eyes
-        sf::CircleShape eyeWhite(3.f);
-        eyeWhite.setFillColor(sf::Color::White);
-        eyeWhite.setOrigin({3.f, 3.f});
-        eyeWhite.setPosition({x - 3.5f, y - 3.f});
-        rt.draw(eyeWhite);
-        eyeWhite.setPosition({x + 3.5f, y - 3.f});
-        rt.draw(eyeWhite);
+    bool inside(Pos p) const { return p.x >= 0 && p.x < COLS && p.y >= 0 && p.y < ROWS; }
 
-        sf::CircleShape pupil(1.5f);
-        pupil.setFillColor(sf::Color(0, 0, 200));
-        pupil.setOrigin({1.5f, 1.5f});
-        pupil.setPosition({x - 3.f, y - 3.f});
-        rt.draw(pupil);
-        pupil.setPosition({x + 4.f, y - 3.f});
-        rt.draw(pupil);
-    } else {
-        // Scared face
-        sf::RectangleShape mouth({r * 1.2f, 2.f});
-        mouth.setOrigin({r * 0.6f, 1.f});
-        mouth.setPosition({x, y + 2.f});
-        mouth.setFillColor(sf::Color::White);
-        rt.draw(mouth);
-    }
-}
-
-// ─── Ghost ────────────────────────────────────────────────────────────────────
-enum class GhostMode { Chase, Scatter, Frightened, Dead };
-
-struct Ghost {
-    float x, y;
-    Dir   dir = Dir::Left;
-    sf::Color color;
-    GhostMode mode  = GhostMode::Scatter;
-    float frighTimer = 0.f;
-    float scatterTimer = 0.f;
-    float deadTimer  = 0.f;
-    sf::Vector2i scatterTarget;
-    int id; // 0=Blinky 1=Pinky 2=Inky 3=Clyde
-
-    float speed() const {
-        if (mode == GhostMode::Dead)       return 200.f;
-        if (mode == GhostMode::Frightened) return 80.f;
-        return 110.f;
+    bool blocksMovement(Pos p) const {
+        if (!inside(p)) return true;
+        const Tile tile = tiles[p.y][p.x];
+        return tile == Tile::Brick || tile == Tile::Steel || tile == Tile::Base;
     }
 
-    sf::Vector2i tilePos() const {
-        return {wrapCol(tileIndex(x)), tileIndex(y)};
+    bool blocksBullet(Pos p) const { return blocksMovement(p); }
+
+    bool damage(Pos p, int& score) {
+        if (!inside(p)) return false;
+        if (tiles[p.y][p.x] == Tile::Brick) {
+            tiles[p.y][p.x] = Tile::Empty;
+            score += 5;
+            return true;
+        }
+        if (tiles[p.y][p.x] == Tile::Base) {
+            tiles[p.y][p.x] = Tile::Empty;
+            return true;
+        }
+        return tiles[p.y][p.x] == Tile::Steel;
     }
 
-    void respawn() {
-        static constexpr float startX[] = {13.5f, 13.5f, 11.5f, 15.5f};
-        static constexpr float startY[] = {11.5f, 14.5f, 14.5f, 14.5f};
-        x = startX[id] * TILE;
-        y = startY[id] * TILE;
-        dir = Dir::Left;
-        mode = GhostMode::Scatter;
-        frighTimer = 0.f;
-        scatterTimer = 6.f;
-        deadTimer = 0.f;
+    char glyph(Pos p) const {
+        switch (tiles[p.y][p.x]) {
+            case Tile::Empty: return ' ';
+            case Tile::Brick: return '%';
+            case Tile::Steel: return '#';
+            case Tile::Hedge: return '&';
+            case Tile::Base:  return 'A';
+        }
+        return ' ';
     }
 };
 
-// ─── PacMan ───────────────────────────────────────────────────────────────────
-struct Pacman {
-    float x, y;
-    Dir   dir     = Dir::None;
-    Dir   nextDir = Dir::None;
-    float mouthT  = 0.f; // 0..1
-    bool  mouthOpen = true;
-    float speed   = 140.f;
-
-    sf::Vector2i tilePos() const {
-        return {wrapCol(tileIndex(x)), tileIndex(y)};
-    }
+struct Bullet {
+    Pos pos;
+    Dir dir = Dir::Up;
+    bool fromPlayer = false;
+    bool alive = true;
 };
 
-// ─── Game State ───────────────────────────────────────────────────────────────
-enum class GameState { Menu, Playing, Dead, LevelClear, GameOver };
+struct Tank {
+    Pos pos;
+    Dir dir = Dir::Up;
+    int reload = 0;
+    bool alive = true;
+};
+
+struct Enemy : Tank {
+    int think = 0;
+};
 
 struct Game {
-    int dots[ROWS][COLS];
-    int score = 0;
+    Board board;
+    Tank player;
+    std::vector<Enemy> enemies;
+    std::vector<Bullet> bullets;
+    State state = State::Menu;
     int lives = 3;
-    int level = 1;
-    GameState state = GameState::Menu;
-    float stateTimer = 0.f;
-    int totalDots = 0;
-    int eatenDots = 0;
-    float frightTime = 0.f; // global frightened time remaining
-    int ghostEatCombo = 0;  // combo multiplier for eating ghosts
+    int score = 0;
+    int wave = 1;
+    std::mt19937 rng{1337};
 
-    Pacman pac;
-    Ghost  ghosts[4];
-
-    void initDots() {
-        eatenDots = 0; totalDots = 0;
-        for (int r = 0; r < ROWS; ++r)
-            for (int c = 0; c < COLS; ++c) {
-                dots[r][c] = MAP[r][c];
-                if (dots[r][c] == 2 || dots[r][c] == 3) ++totalDots;
-            }
+    void start(bool fullReset) {
+        board.reset();
+        bullets.clear();
+        if (fullReset) {
+            lives = 3;
+            score = 0;
+            wave = 1;
+        }
+        spawnPlayer();
+        spawnWave();
+        state = State::Playing;
     }
 
-    void reset(bool fullReset = false) {
-        if (fullReset) { score = 0; lives = 3; level = 1; }
-        initDots();
-        frightTime = 0.f;
-        ghostEatCombo = 0;
+    void spawnPlayer() {
+        player = {};
+        player.pos = {PLAYER_START_X, PLAYER_START_Y};
+        player.dir = Dir::Up;
+        player.alive = true;
+    }
 
-        // Pac-Man start position
-        pac.x = 13.5f * TILE;
-        pac.y = 23.5f * TILE;
-        pac.dir = Dir::None; pac.nextDir = Dir::None;
-        pac.mouthT = 0.f;
-
-        // Ghost starting positions and colors
-        float gx[] = {13.5f, 13.5f, 11.5f, 15.5f};
-        float gy[] = {11.5f, 14.5f, 14.5f, 14.5f};
-        sf::Color gc[] = {sf::Color::Red, sf::Color(255,180,255), sf::Color(0,255,255), sf::Color(255,165,0)};
-        sf::Vector2i scatter[] = {{25,0},{2,0},{27,29},{0,29}};
-        for (int i = 0; i < 4; ++i) {
-            ghosts[i].x  = gx[i] * TILE;
-            ghosts[i].y  = gy[i] * TILE;
-            ghosts[i].color = gc[i];
-            ghosts[i].scatterTarget = scatter[i];
-            ghosts[i].id  = i;
-            ghosts[i].dir = Dir::Left;
-            ghosts[i].mode = GhostMode::Scatter;
-            ghosts[i].frighTimer = 0.f;
-            ghosts[i].scatterTimer = 6.f;
-            ghosts[i].deadTimer = 0.f;
+    void spawnWave() {
+        enemies.clear();
+        const std::array<Pos, 7> starts = {{{2, 2}, {COLS / 2, 1}, {COLS - 3, 2}, {4, 5}, {COLS - 5, 5}, {8, 9}, {COLS - 9, 9}}};
+        const int count = std::min<int>(3 + wave, starts.size());
+        for (int i = 0; i < count; ++i) {
+            Enemy enemy;
+            enemy.pos = starts[i];
+            enemy.dir = Dir::Down;
+            enemy.reload = 1 + i % 2;
+            enemy.think = i % 3;
+            enemies.push_back(enemy);
         }
     }
 };
 
-// ─── Ghost AI ─────────────────────────────────────────────────────────────────
-int tileDistSq(sf::Vector2i a, sf::Vector2i b) {
-    int dx = a.x - b.x, dy = a.y - b.y;
-    return dx*dx + dy*dy;
+bool occupiedByEnemy(const Game& game, Pos pos) {
+    return std::any_of(game.enemies.begin(), game.enemies.end(), [pos](const Enemy& enemy) {
+        return enemy.alive && enemy.pos == pos;
+    });
 }
 
-Dir bestDirToward(float gx, float gy, Dir curDir, sf::Vector2i target, bool ghostMode = true,
-                  bool allowReverse = false) {
-    Dir dirs[] = {Dir::Up, Dir::Down, Dir::Left, Dir::Right};
-    Dir best = Dir::None;
-    int bestDist = std::numeric_limits<int>::max();
+bool canMoveTo(const Game& game, Pos pos, bool isPlayer) {
+    if (game.board.blocksMovement(pos)) return false;
+    if (isPlayer) return !occupiedByEnemy(game, pos);
+    return !(game.player.alive && game.player.pos == pos) && !occupiedByEnemy(game, pos);
+}
 
-    int tc = wrapCol(tileIndex(gx));
-    int tr = tileIndex(gy);
+void fire(Game& game, const Tank& tank, bool fromPlayer) {
+    if (!tank.alive || tank.reload > 0) return;
+    Pos muzzle = step(tank.pos, tank.dir);
+    if (game.board.blocksMovement(muzzle)) return;
+    game.bullets.push_back({muzzle, tank.dir, fromPlayer, true});
+}
 
-    for (Dir d : dirs) {
-        if (!allowReverse && d == opposite(curDir)) continue;
-        auto dv = dirVec(d);
-        int nc = wrapCol(tc + static_cast<int>(dv.x));
-        int nr = tr + static_cast<int>(dv.y);
-        if (isWall(nc, nr, ghostMode)) continue;
-        int dist = tileDistSq({nc, nr}, target);
-        if (dist < bestDist) { bestDist = dist; best = d; }
+bool lineOfSight(const Board& board, Pos from, Pos to) {
+    if (from.x != to.x && from.y != to.y) return false;
+    Dir dir = Dir::Right;
+    if (from.x > to.x) dir = Dir::Left;
+    else if (from.x < to.x) dir = Dir::Right;
+    else if (from.y > to.y) dir = Dir::Up;
+    else dir = Dir::Down;
+    for (Pos p = step(from, dir); !(p == to); p = step(p, dir)) {
+        if (board.blocksBullet(p)) return false;
     }
-    return best == Dir::None ? opposite(curDir) : best;
+    return true;
 }
 
-Dir randomDir(float gx, float gy, Dir curDir, std::mt19937& rng) {
-    Dir dirs[] = {Dir::Up, Dir::Down, Dir::Left, Dir::Right};
-    std::shuffle(dirs, dirs + 4, rng);
-    int tc = wrapCol(tileIndex(gx));
-    int tr = tileIndex(gy);
-    for (Dir d : dirs) {
-        if (d == opposite(curDir)) continue;
-        auto dv = dirVec(d);
-        int nc = wrapCol(tc + static_cast<int>(dv.x));
-        int nr = tr + static_cast<int>(dv.y);
-        if (!isWall(nc, nr, true)) return d;
+Dir directionToward(Pos from, Pos to) {
+    const int dx = to.x - from.x;
+    const int dy = to.y - from.y;
+    if (std::abs(dx) > std::abs(dy)) return dx > 0 ? Dir::Right : Dir::Left;
+    return dy > 0 ? Dir::Down : Dir::Up;
+}
+
+void updateEnemy(Game& game, Enemy& enemy) {
+    enemy.reload = std::max(0, enemy.reload - 1);
+    --enemy.think;
+
+    if (lineOfSight(game.board, enemy.pos, game.player.pos)) {
+        enemy.dir = directionToward(enemy.pos, game.player.pos);
+        if (enemy.reload == 0) {
+            fire(game, enemy, false);
+            enemy.reload = 5;
+        }
+        return;
     }
-    return opposite(curDir);
-}
 
-sf::Vector2i ghostTarget(const Ghost& g, const Pacman& pac, const Ghost* ghosts) {
-    auto pt = pac.tilePos();
-    auto dv = dirVec(pac.dir);
-
-    switch (g.id) {
-        case 0: // Blinky: directly at pac
-            return pt;
-        case 1: { // Pinky: 4 tiles ahead of pac
-            return {pt.x + (int)dv.x * 4, pt.y + (int)dv.y * 4};
-        }
-        case 2: { // Inky: vector trick with Blinky
-            sf::Vector2i ahead = {pt.x + (int)dv.x * 2, pt.y + (int)dv.y * 2};
-            sf::Vector2i blinky = ghosts[0].tilePos();
-            return {2 * ahead.x - blinky.x, 2 * ahead.y - blinky.y};
-        }
-        case 3: { // Clyde: chase if far, scatter corner if close
-            int dx = g.tilePos().x - pt.x, dy = g.tilePos().y - pt.y;
-            if (dx*dx + dy*dy > 64) return pt;
-            return g.scatterTarget;
-        }
-        default: return pt;
+    if (enemy.think <= 0) {
+        std::array<Dir, 5> choices = {Dir::Up, Dir::Down, Dir::Left, Dir::Right, directionToward(enemy.pos, {BASE_X, BASE_Y})};
+        std::uniform_int_distribution<int> pick(0, static_cast<int>(choices.size()) - 1);
+        enemy.dir = choices[pick(game.rng)];
+        enemy.think = 2;
     }
+
+    Pos next = step(enemy.pos, enemy.dir);
+    if (canMoveTo(game, next, false)) enemy.pos = next;
+    else enemy.dir = opposite(enemy.dir);
 }
 
-bool isGhostHouseTile(sf::Vector2i tile) {
-    return tile.y >= 13 && tile.y <= 15 && tile.x >= 11 && tile.x <= 16;
-}
+void updateBullets(Game& game) {
+    for (auto& bullet : game.bullets) {
+        if (!bullet.alive) continue;
+        bullet.pos = step(bullet.pos, bullet.dir);
+        if (!game.board.inside(bullet.pos)) {
+            bullet.alive = false;
+            continue;
+        }
+        if (game.board.blocksBullet(bullet.pos)) {
+            if (bullet.pos.x == BASE_X && bullet.pos.y == BASE_Y) game.state = State::GameOver;
+            game.board.damage(bullet.pos, game.score);
+            bullet.alive = false;
+            continue;
+        }
+        if (bullet.fromPlayer) {
+            for (auto& enemy : game.enemies) {
+                if (enemy.alive && enemy.pos == bullet.pos) {
+                    enemy.alive = false;
+                    bullet.alive = false;
+                    game.score += 100;
+                    break;
+                }
+            }
+        } else if (game.player.alive && game.player.pos == bullet.pos) {
+            bullet.alive = false;
+            --game.lives;
+            if (game.lives <= 0) game.state = State::GameOver;
+            else game.spawnPlayer();
+        }
+    }
 
-void updateGhosts(Game& game, float dt, std::mt19937& rng) {
-    for (auto& g : game.ghosts) {
-        if (g.mode == GhostMode::Scatter) {
-            g.scatterTimer -= dt;
-            if (g.scatterTimer <= 0.f) {
-                g.mode = GhostMode::Chase;
+    for (std::size_t i = 0; i < game.bullets.size(); ++i) {
+        if (!game.bullets[i].alive) continue;
+        for (std::size_t j = i + 1; j < game.bullets.size(); ++j) {
+            if (game.bullets[j].alive && game.bullets[i].pos == game.bullets[j].pos) {
+                game.bullets[i].alive = false;
+                game.bullets[j].alive = false;
             }
         }
+    }
 
-        float spd = g.speed();
-        bool atCentreX = atTileCentre(g.x);
-        bool atCentreY = atTileCentre(g.y);
+    game.bullets.erase(std::remove_if(game.bullets.begin(), game.bullets.end(), [](const Bullet& bullet) {
+        return !bullet.alive;
+    }), game.bullets.end());
+}
 
-        if (g.mode == GhostMode::Dead && atCentreX && atCentreY &&
-            g.tilePos() == GHOST_HOME_TILE) {
-            g.x = tileCenter(GHOST_HOME_TILE.x);
-            g.y = tileCenter(GHOST_HOME_TILE.y);
-            g.mode = GhostMode::Scatter;
-            g.scatterTimer = 6.f;
-            g.dir = Dir::Left;
-        }
+void updateGame(Game& game, char command) {
+    if (game.state == State::Menu || game.state == State::GameOver) {
+        if (command == '\n' || command == 'p') game.start(true);
+        return;
+    }
+    if (game.state == State::WaveClear) {
+        ++game.wave;
+        game.spawnPlayer();
+        game.spawnWave();
+        game.state = State::Playing;
+        return;
+    }
 
-        if (atCentreX && atCentreY) {
-            g.x = snapAxis(g.x);
-            g.y = snapAxis(g.y);
+    game.player.reload = std::max(0, game.player.reload - 1);
+    Dir requested = game.player.dir;
+    bool moveRequested = true;
+    if (command == 'w') requested = Dir::Up;
+    else if (command == 's') requested = Dir::Down;
+    else if (command == 'a') requested = Dir::Left;
+    else if (command == 'd') requested = Dir::Right;
+    else moveRequested = false;
 
-            sf::Vector2i tile = g.tilePos();
-            sf::Vector2i target;
-            bool allowReverse = (g.mode == GhostMode::Dead);
+    if (moveRequested) {
+        game.player.dir = requested;
+        Pos next = step(game.player.pos, game.player.dir);
+        if (canMoveTo(game, next, true)) game.player.pos = next;
+    } else if (command == 'f' || command == ' ') {
+        fire(game, game.player, true);
+        game.player.reload = 1;
+    }
 
-            if (g.mode != GhostMode::Dead && isGhostHouseTile(tile)) {
-                target = GHOST_EXIT_TILE;
-            } else if (g.mode == GhostMode::Scatter || g.mode == GhostMode::Dead) {
-                target = (g.mode == GhostMode::Dead) ? GHOST_HOME_TILE : g.scatterTarget;
-            } else if (g.mode == GhostMode::Frightened) {
-                g.dir = randomDir(g.x, g.y, g.dir, rng);
-                goto moveGhost;
-            } else {
-                target = ghostTarget(g, game.pac, game.ghosts);
-            }
+    for (auto& enemy : game.enemies) if (enemy.alive) updateEnemy(game, enemy);
+    updateBullets(game);
+    game.enemies.erase(std::remove_if(game.enemies.begin(), game.enemies.end(), [](const Enemy& enemy) {
+        return !enemy.alive;
+    }), game.enemies.end());
 
-            g.dir = bestDirToward(g.x, g.y, g.dir, target, true, allowReverse);
-        }
-
-        moveGhost:
-        {
-            moveEntity(g.x, g.y, g.dir, spd * dt, true);
-            if (g.x < -TILE * 0.5f)   g.x = COLS * TILE + TILE * 0.5f;
-            if (g.x > COLS * TILE + TILE * 0.5f) g.x = -TILE * 0.5f;
-        }
+    if (game.enemies.empty() && game.state == State::Playing) {
+        game.score += 250 * game.wave;
+        game.state = State::WaveClear;
     }
 }
 
-bool runSelfTests() {
+std::string render(const Game& game) {
+    std::array<std::string, ROWS> frame{};
+    for (int y = 0; y < ROWS; ++y) {
+        frame[y].resize(COLS);
+        for (int x = 0; x < COLS; ++x) frame[y][x] = game.board.glyph({x, y});
+    }
+    for (const auto& bullet : game.bullets) if (bullet.alive && game.board.inside(bullet.pos)) frame[bullet.pos.y][bullet.pos.x] = '*';
+    for (const auto& enemy : game.enemies) if (enemy.alive) frame[enemy.pos.y][enemy.pos.x] = 'E';
+    if (game.player.alive) frame[game.player.pos.y][game.player.pos.x] = dirGlyph(game.player.dir);
+
+    std::string out;
+    out += "TANKS  Score: " + std::to_string(game.score) + "  Lives: " + std::to_string(game.lives) + "  Wave: " + std::to_string(game.wave) + "\n";
+    out += "Controls: W/A/S/D move and aim, F fire, P start/restart, Q quit\n";
+    for (const auto& row : frame) out += row + '\n';
+    if (game.state == State::Menu) out += "Press P to start. Protect the base (A) and destroy every enemy tank.\n";
+    if (game.state == State::WaveClear) out += "Wave clear! Press any command to continue.\n";
+    if (game.state == State::GameOver) out += "Game over. Press P to restart or Q to quit.\n";
+    return out;
+}
+
+bool selfTest() {
     bool ok = true;
-    auto check = [&](bool condition, const std::string& name) {
-        if (condition) {
-            std::cout << "PASS: " << name << '\n';
-        } else {
-            std::cerr << "FAIL: " << name << '\n';
+    auto expect = [&](bool condition, const std::string& message) {
+        if (!condition) {
             ok = false;
+            std::cerr << "SELF-TEST FAILED: " << message << '\n';
         }
     };
 
-    check(approxEq(snapAxis(23.f * TILE), 23.5f * TILE),
-          "snapAxis recenters positions to tile centers");
-    check(nearCentre(23.5f * TILE), "nearCentre accepts a centered lane position");
-    check(!nearCentre(23.f * TILE), "nearCentre rejects tile-edge positions");
-    check(atTileCentre(23.5f * TILE), "atTileCentre accepts the exact tile center");
-    check(canMoveDir(13.5f * TILE, 23.5f * TILE, Dir::Left),
-          "Pac-Man can move immediately from the centered spawn tile");
-
-    float blockedX = 1.5f * TILE;
-    float blockedY = 1.5f * TILE;
-    float blockedMove = moveEntity(blockedX, blockedY, Dir::Left, 10.f);
-    check(blockedMove < 10.f && approxEq(blockedX, 27.f) &&
-              canOccupy(blockedX, blockedY) && !canAdvance(blockedX, blockedY, Dir::Left, 1.f),
-          "moveEntity stops cleanly at wall boundaries");
-
-    Ghost deadGhost;
-    deadGhost.id = 0;
-    deadGhost.x = 13.5f * TILE;
-    deadGhost.y = 11.5f * TILE;
-    deadGhost.dir = Dir::Up;
-    deadGhost.mode = GhostMode::Dead;
-    check(bestDirToward(deadGhost.x, deadGhost.y, deadGhost.dir, GHOST_HOME_TILE, true, true) == Dir::Down,
-          "dead ghosts can reverse toward home");
-
-    Ghost respawnGhost;
-    respawnGhost.id = 2;
-    respawnGhost.respawn();
-    check(approxEq(respawnGhost.x, 11.5f * TILE) && approxEq(respawnGhost.y, 14.5f * TILE),
-          "ghost respawn restores centered starting coordinates");
-    check(canAdvance(13.5f * TILE, 11.5f * TILE, Dir::Down, 1.f, true),
-          "Blinky can step toward the door from spawn");
-    check(canAdvance(13.5f * TILE, 14.5f * TILE, Dir::Up, 1.f, true),
-          "Pinky can step upward from the house");
-    check(canAdvance(11.5f * TILE, 14.5f * TILE, Dir::Up, 1.f, true),
-          "Inky can step upward from the house");
-    check(canAdvance(15.5f * TILE, 14.5f * TILE, Dir::Up, 1.f, true),
-          "Clyde can step upward from the house");
-
-    Ghost homeGhost;
-    homeGhost.id = 1;
-    homeGhost.mode = GhostMode::Dead;
-    homeGhost.x = tileCenter(GHOST_HOME_TILE.x);
-    homeGhost.y = tileCenter(GHOST_HOME_TILE.y);
-    bool atCentreX = atTileCentre(homeGhost.x);
-    bool atCentreY = atTileCentre(homeGhost.y);
-    if (homeGhost.mode == GhostMode::Dead && atCentreX && atCentreY &&
-        homeGhost.tilePos() == GHOST_HOME_TILE) {
-        homeGhost.x = tileCenter(GHOST_HOME_TILE.x);
-        homeGhost.y = tileCenter(GHOST_HOME_TILE.y);
-        homeGhost.mode = GhostMode::Scatter;
-        homeGhost.scatterTimer = 6.f;
-        homeGhost.dir = Dir::Left;
-    }
-    check(homeGhost.mode == GhostMode::Scatter && homeGhost.dir == Dir::Left,
-          "dead ghosts revive once they reach the home tile");
-
     Game game;
-    game.reset(true);
-    std::mt19937 simRng(42);
-    std::array<bool, 4> leftHouse = {false, false, false, false};
-    std::array<sf::Vector2i, 4> minTile;
-    std::array<sf::Vector2i, 4> maxTile;
-    for (int i = 0; i < 4; ++i) {
-        minTile[i] = game.ghosts[i].tilePos();
-        maxTile[i] = game.ghosts[i].tilePos();
-    }
-    for (int step = 0; step < 10 * 60; ++step) {
-        updateGhosts(game, 1.f / 60.f, simRng);
-        for (int i = 0; i < 4; ++i) {
-            sf::Vector2i tile = game.ghosts[i].tilePos();
-            minTile[i].x = std::min(minTile[i].x, tile.x);
-            minTile[i].y = std::min(minTile[i].y, tile.y);
-            maxTile[i].x = std::max(maxTile[i].x, tile.x);
-            maxTile[i].y = std::max(maxTile[i].y, tile.y);
-            if (!isGhostHouseTile(tile) && tile != GHOST_HOME_TILE) {
-                leftHouse[i] = true;
-            }
-        }
-    }
-    check(leftHouse[1] && leftHouse[2] && leftHouse[3],
-          "house ghosts leave the ghost house");
-    check((maxTile[0].x - minTile[0].x >= 3 || maxTile[0].y - minTile[0].y >= 3) &&
-              (maxTile[1].x - minTile[1].x >= 3 || maxTile[1].y - minTile[1].y >= 3) &&
-              (maxTile[2].x - minTile[2].x >= 3 || maxTile[2].y - minTile[2].y >= 3) &&
-              (maxTile[3].x - minTile[3].x >= 3 || maxTile[3].y - minTile[3].y >= 3),
-          "ghosts traverse several maze tiles after leaving the house");
-
+    expect(game.board.blocksMovement({0, 0}), "steel perimeter blocks movement");
+    expect(!game.board.blocksMovement({1, 1}), "empty floor is passable");
+    int score = 0;
+    expect(game.board.damage({3, 2}, score), "brick damage succeeds");
+    expect(!game.board.blocksMovement({3, 2}), "destroyed brick becomes passable");
+    expect(score == 5, "destroying a brick awards 5 points");
+    game.start(true);
+    expect(game.enemies.size() == 4, "wave one spawns four enemies");
+    expect(lineOfSight(game.board, {1, 1}, {13, 1}), "open row has line of sight");
+    expect(!lineOfSight(game.board, {1, 1}, {20, 1}), "steel column blocks line of sight");
+    game.player.dir = Dir::Right;
+    game.player.reload = 0;
+    fire(game, game.player, true);
+    expect(game.bullets.size() == 1 && game.bullets.front().fromPlayer, "player fires a bullet");
+    std::cout << (ok ? "All self-tests passed.\n" : "Self-tests failed.\n");
     return ok;
 }
 
-// ─── Sound generation (no external files needed) ─────────────────────────────
-// Generates a PCM tone that sweeps from f1 to f2 Hz over `secs` seconds.
-sf::SoundBuffer makeTone(float f1, float f2, float secs, float vol = 0.35f) {
-    const unsigned SR = 44100;
-    auto n = static_cast<std::uint64_t>(SR * secs);
-    std::vector<std::int16_t> s(n);
-    float phase = 0.f;
-    for (std::uint64_t i = 0; i < n; ++i) {
-        float frac = static_cast<float>(i) / static_cast<float>(n);
-        float freq = f1 + (f2 - f1) * frac;
-        float env  = std::max(0.f, 1.f - frac * 1.5f);
-        // Square wave for classic 8-bit feel
-        float wave = (std::sin(phase) >= 0.f) ? 1.f : -1.f;
-        s[i] = static_cast<std::int16_t>(vol * 32767.f * env * wave);
-        phase += 2.f * PI * freq / static_cast<float>(SR);
-    }
-    return sf::SoundBuffer(s.data(), n, 1, SR, {sf::SoundChannel::Mono});
-}
+} // namespace
 
-// Descending death jingle (chromatic slide with vibrato)
-sf::SoundBuffer makeDeathSound() {
-    const unsigned SR = 44100;
-    float secs = 1.8f;
-    auto n = static_cast<std::uint64_t>(SR * secs);
-    std::vector<std::int16_t> s(n);
-    float phase = 0.f;
-    for (std::uint64_t i = 0; i < n; ++i) {
-        float frac = static_cast<float>(i) / static_cast<float>(n);
-        float freq = 480.f * std::pow(0.04f, frac); // exponential fall
-        float vib  = 1.f + 0.04f * std::sin(2.f * PI * 8.f * static_cast<float>(i) / SR);
-        float env  = std::max(0.f, 1.f - frac * 0.9f);
-        float wave = (std::sin(phase) >= 0.f) ? 1.f : -1.f;
-        s[i] = static_cast<std::int16_t>(0.4f * 32767.f * env * wave * vib);
-        phase += 2.f * PI * freq * vib / static_cast<float>(SR);
-    }
-    return sf::SoundBuffer(s.data(), n, 1, SR, {sf::SoundChannel::Mono});
-}
-
-struct Sounds {
-    sf::SoundBuffer dotBuf[2];
-    sf::SoundBuffer pelletBuf;
-    sf::SoundBuffer deathBuf;
-    sf::SoundBuffer ghostBuf;
-    std::optional<sf::Sound> dotSnd[2];
-    std::optional<sf::Sound> pelletSnd;
-    std::optional<sf::Sound> deathSnd;
-    std::optional<sf::Sound> ghostSnd;
-    int dotIdx = 0;
-
-    Sounds() {
-        dotBuf[0] = makeTone(480.f, 480.f, 0.055f); // high blip
-        dotBuf[1] = makeTone(360.f, 360.f, 0.055f); // low blip  (alternating)
-        pelletBuf = makeTone(200.f, 1200.f, 0.35f);  // rising sweep
-        deathBuf  = makeDeathSound();
-        ghostBuf  = makeTone(120.f, 1400.f, 0.22f, 0.5f); // fast rising blip
-        dotSnd[0].emplace(dotBuf[0]);
-        dotSnd[1].emplace(dotBuf[1]);
-        pelletSnd.emplace(pelletBuf);
-        deathSnd.emplace(deathBuf);
-        ghostSnd.emplace(ghostBuf);
-    }
-
-    void playDot() {
-        dotSnd[dotIdx]->stop();
-        dotSnd[dotIdx]->play();
-        dotIdx ^= 1;
-    }
-    void playPellet() { pelletSnd->stop(); pelletSnd->play(); }
-    void playDeath()  { deathSnd->stop();  deathSnd->play();  }
-    void playGhost()  { ghostSnd->stop();  ghostSnd->play();  }
-};
-
-// ─── Main ─────────────────────────────────────────────────────────────────────
 int main(int argc, char** argv) {
-    if (argc > 1 && std::string(argv[1]) == "--self-test") {
-        return runSelfTests() ? 0 : 1;
-    }
-
-    sf::RenderWindow window(sf::VideoMode({(unsigned)WIN_W, (unsigned)WIN_H}), "Pac-Man");
-    window.setFramerateLimit(60);
-
-    // Load font (try several system paths)
-    std::optional<sf::Font> fontOpt;
-    for (auto& p : {
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/Library/Fonts/Arial.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans.ttf"
-    }) {
-        if (std::filesystem::exists(p)) {
-            sf::Font f(p);
-            fontOpt = std::move(f);
-            break;
-        }
-    }
-    // Fallback: construct without file if all fail (text won't render, game still works)
-    sf::Font font = fontOpt.has_value() ? std::move(*fontOpt) : sf::Font();
-
-    std::mt19937 rng(42);
-    Sounds sfx;
+    if (argc > 1 && std::string(argv[1]) == "--self-test") return selfTest() ? 0 : 1;
 
     Game game;
-    game.reset(true);
-    game.state = GameState::Menu;
-
-    sf::Clock clock;
-
-    // Prepare wall shapes (cache them)
-    std::vector<sf::RectangleShape> walls;
-    for (int r = 0; r < ROWS; ++r) {
-        for (int c = 0; c < COLS; ++c) {
-            if (MAP[r][c] == 1) {
-                sf::RectangleShape wall({(float)TILE - 1.f, (float)TILE - 1.f});
-                wall.setPosition({(float)c * TILE + 0.5f, (float)r * TILE + 0.5f});
-                wall.setFillColor(sf::Color(0, 0, 180));
-                wall.setOutlineColor(sf::Color(100, 100, 255));
-                wall.setOutlineThickness(1.f);
-                walls.push_back(wall);
-            }
-        }
+    char command = 'p';
+    bool running = true;
+    while (running) {
+        std::cout << "\033[2J\033[H" << render(game) << "Command> " << std::flush;
+        if (!(std::cin >> command)) break;
+        command = static_cast<char>(std::tolower(static_cast<unsigned char>(command)));
+        if (command == 'q') running = false;
+        else updateGame(game, command);
     }
-
-    // Ghost house door shapes
-    std::vector<sf::RectangleShape> doors;
-    for (int r = 0; r < ROWS; ++r) {
-        for (int c = 0; c < COLS; ++c) {
-            if (MAP[r][c] == 4) {
-                sf::RectangleShape door({(float)TILE - 2.f, 4.f});
-                door.setPosition({(float)c * TILE + 1.f, (float)r * TILE + TILE * 0.5f - 2.f});
-                door.setFillColor(sf::Color(255, 180, 255));
-                doors.push_back(door);
-            }
-        }
-    }
-
-    while (window.isOpen()) {
-        float dt = clock.restart().asSeconds();
-        if (dt > 0.05f) dt = 0.05f;
-
-        // ── Events ────────────────────────────────────────────────────────────
-        while (const auto event = window.pollEvent()) {
-            if (event->is<sf::Event::Closed>())
-                window.close();
-
-            if (const auto* kp = event->getIf<sf::Event::KeyPressed>()) {
-                using K = sf::Keyboard::Key;
-                if (game.state == GameState::Menu || game.state == GameState::GameOver) {
-                    if (kp->code == K::Enter || kp->code == K::Space) {
-                        game.reset(true);
-                        game.state = GameState::Playing;
-                    }
-                } else if (game.state == GameState::Playing) {
-                    switch (kp->code) {
-                        case K::Left:  game.pac.nextDir = Dir::Left;  break;
-                        case K::Right: game.pac.nextDir = Dir::Right; break;
-                        case K::Up:    game.pac.nextDir = Dir::Up;    break;
-                        case K::Down:  game.pac.nextDir = Dir::Down;  break;
-                        case K::Escape: window.close(); break;
-                        default: break;
-                    }
-                } else if (game.state == GameState::Dead) {
-                    // wait for timer
-                } else if (game.state == GameState::LevelClear) {
-                    // wait for timer
-                }
-            }
-        }
-        // Also handle held keys
-        if (game.state == GameState::Playing) {
-            using K = sf::Keyboard::Key;
-            if (sf::Keyboard::isKeyPressed(K::Left))  game.pac.nextDir = Dir::Left;
-            if (sf::Keyboard::isKeyPressed(K::Right)) game.pac.nextDir = Dir::Right;
-            if (sf::Keyboard::isKeyPressed(K::Up))    game.pac.nextDir = Dir::Up;
-            if (sf::Keyboard::isKeyPressed(K::Down))  game.pac.nextDir = Dir::Down;
-        }
-
-        // ── Update ────────────────────────────────────────────────────────────
-        if (game.state == GameState::Playing) {
-            // Frighten timer countdown
-            if (game.frightTime > 0.f) {
-                game.frightTime -= dt;
-                if (game.frightTime <= 0.f) {
-                    game.frightTime = 0.f;
-                    game.ghostEatCombo = 0;
-                    for (auto& g : game.ghosts)
-                        if (g.mode == GhostMode::Frightened)
-                            g.mode = GhostMode::Chase;
-                }
-            }
-
-            // ── Pac-Man movement ──────────────────────────────────────────────
-            {
-                Pacman& p = game.pac;
-                float speed = p.speed;
-
-                // Try to turn into nextDir if near tile centre
-                if (p.nextDir != Dir::None && p.nextDir != p.dir) {
-                    bool alignedH = nearCentre(p.y);
-                    bool alignedV = nearCentre(p.x);
-                    if ((p.nextDir == Dir::Left || p.nextDir == Dir::Right) && alignedH) {
-                        p.y = snapAxis(p.y); // snap y to grid
-                        if (canMoveDir(p.x, p.y, p.nextDir)) {
-                            p.dir = p.nextDir;
-                        }
-                    } else if ((p.nextDir == Dir::Up || p.nextDir == Dir::Down) && alignedV) {
-                        p.x = snapAxis(p.x); // snap x to grid
-                        if (canMoveDir(p.x, p.y, p.nextDir)) {
-                            p.dir = p.nextDir;
-                        }
-                    }
-                }
-
-                // Move in current direction
-                if (p.dir != Dir::None) {
-                    float moved = moveEntity(p.x, p.y, p.dir, speed * dt);
-                    if (moved <= 0.f) {
-                        p.dir = Dir::None;
-                    }
-                }
-
-                // Tunnel wrap
-                if (p.x < -TILE * 0.5f)   p.x = COLS * TILE + TILE * 0.5f;
-                if (p.x > COLS * TILE + TILE * 0.5f) p.x = -TILE * 0.5f;
-
-                // Mouth animation
-                if (p.dir != Dir::None) {
-                    p.mouthT += dt * 4.f;
-                    if (p.mouthT > 1.f) { p.mouthT = 0.f; }
-                }
-
-                // Eat dots
-                sf::Vector2i pacTile = p.tilePos();
-                int tc = pacTile.x;
-                int tr = pacTile.y;
-                if (tc >= 0 && tc < COLS && tr >= 0 && tr < ROWS) {
-                    int& cell = game.dots[tr][tc];
-                    if (cell == 2) {
-                        cell = 0;
-                        game.score += 10;
-                        ++game.eatenDots;
-                        sfx.playDot();
-                    } else if (cell == 3) {
-                        cell = 0;
-                        game.score += 50;
-                        ++game.eatenDots;
-                        sfx.playPellet();
-                        // Frighten all ghosts
-                        game.frightTime = 8.f;
-                        game.ghostEatCombo = 0;
-                        for (auto& g : game.ghosts) {
-                            if (g.mode != GhostMode::Dead) {
-                                g.dir = opposite(g.dir);
-                                g.mode = GhostMode::Frightened;
-                            }
-                        }
-                    }
-                }
-
-                // Check win
-                if (game.eatenDots >= game.totalDots) {
-                    game.state = GameState::LevelClear;
-                    game.stateTimer = 2.5f;
-                }
-            }
-
-            // ── Ghost movement ────────────────────────────────────────────────
-            updateGhosts(game, dt, rng);
-
-            // ── Collision: pac vs ghosts ───────────────────────────────────────
-            for (auto& g : game.ghosts) {
-                if (g.mode == GhostMode::Dead) continue;
-                float dx = g.x - game.pac.x, dy = g.y - game.pac.y;
-                if (dx*dx + dy*dy < 16.f * 16.f) {
-                    if (g.mode == GhostMode::Frightened) {
-                        // Eat ghost
-                        ++game.ghostEatCombo;
-                        int pts = 200 * (1 << (game.ghostEatCombo - 1));
-                        game.score += pts;
-                        g.mode = GhostMode::Dead;
-                        g.deadTimer = 0.f;
-                        g.dir = opposite(g.dir);
-                        sfx.playGhost();
-                    } else {
-                        // Pac-Man dies
-                        sfx.playDeath();
-                        --game.lives;
-                        if (game.lives <= 0) {
-                            game.state = GameState::GameOver;
-                            game.stateTimer = 3.5f;
-                        } else {
-                            game.state = GameState::Dead;
-                            game.stateTimer = 2.f;
-                        }
-                    }
-                }
-            }
-        } else if (game.state == GameState::Dead) {
-            game.stateTimer -= dt;
-            if (game.stateTimer <= 0.f) {
-                // Respawn (keep dots)
-                game.pac.x = 13.5f * TILE;
-                game.pac.y = 23.5f * TILE;
-                game.pac.dir = Dir::None; game.pac.nextDir = Dir::None;
-                game.frightTime = 0.f; game.ghostEatCombo = 0;
-                for (auto& g : game.ghosts) g.respawn();
-                game.state = GameState::Playing;
-            }
-        } else if (game.state == GameState::LevelClear) {
-            game.stateTimer -= dt;
-            if (game.stateTimer <= 0.f) {
-                ++game.level;
-                game.reset(false);
-                game.state = GameState::Playing;
-            }
-        } else if (game.state == GameState::GameOver) {
-            game.stateTimer -= dt;
-        }
-
-        // ── Draw ──────────────────────────────────────────────────────────────
-        window.clear(sf::Color::Black);
-
-        // Draw walls
-        for (auto& w : walls) window.draw(w);
-        for (auto& d : doors) window.draw(d);
-
-        // Draw dots and pellets
-        for (int r = 0; r < ROWS; ++r) {
-            for (int c = 0; c < COLS; ++c) {
-                int cell = game.dots[r][c];
-                if (cell == 2) {
-                    sf::CircleShape dot(2.f);
-                    dot.setFillColor(sf::Color(255, 200, 150));
-                    dot.setOrigin({2.f, 2.f});
-                    dot.setPosition({c * TILE + TILE * 0.5f, r * TILE + TILE * 0.5f});
-                    window.draw(dot);
-                } else if (cell == 3) {
-                    // Pulsing power pellet
-                    float pulse = 5.f + 3.f * std::sin(clock.getElapsedTime().asSeconds() * 5.f);
-                    sf::CircleShape pel(pulse);
-                    pel.setFillColor(sf::Color(255, 200, 150));
-                    pel.setOrigin({pulse, pulse});
-                    pel.setPosition({c * TILE + TILE * 0.5f, r * TILE + TILE * 0.5f});
-                    window.draw(pel);
-                }
-            }
-        }
-
-        // Draw ghosts
-        if (game.state != GameState::Menu) {
-            for (auto& g : game.ghosts) {
-                if (g.mode == GhostMode::Dead) continue;
-                bool fright = (g.mode == GhostMode::Frightened);
-                drawGhost(window, g.x, g.y, g.color, fright, game.frightTime);
-            }
-        }
-
-        // Draw Pac-Man
-        if (game.state == GameState::Playing || game.state == GameState::Dead) {
-            float angle = 0.f;
-            switch (game.pac.dir) {
-                case Dir::Right: angle = 0.f;       break;
-                case Dir::Down:  angle = PI * 0.5f; break;
-                case Dir::Left:  angle = PI;        break;
-                case Dir::Up:    angle = PI * 1.5f; break;
-                default:         angle = 0.f;       break;
-            }
-            float mAngle = 0.3f * std::abs(std::sin(game.pac.mouthT * PI));
-            drawPacman(window, game.pac.x, game.pac.y, angle, mAngle);
-        }
-
-        // ── UI Bar ────────────────────────────────────────────────────────────
-        int barY = ROWS * TILE;
-        sf::RectangleShape bar({(float)WIN_W, 60.f});
-        bar.setPosition({0.f, (float)barY});
-        bar.setFillColor(sf::Color(20, 20, 20));
-        window.draw(bar);
-
-        // Score text
-        sf::Text scoreText(font, "SCORE: " + std::to_string(game.score), 20);
-        scoreText.setFillColor(sf::Color::White);
-        scoreText.setPosition({10.f, (float)barY + 5.f});
-        window.draw(scoreText);
-
-        // Level text
-        sf::Text levelText(font, "LEVEL: " + std::to_string(game.level), 20);
-        levelText.setFillColor(sf::Color::Yellow);
-        levelText.setPosition({WIN_W * 0.5f - 40.f, (float)barY + 5.f});
-        window.draw(levelText);
-
-        // Lives (draw pac icons)
-        for (int i = 0; i < game.lives; ++i) {
-            drawPacman(window, WIN_W - 30.f - i * 22.f, barY + 40.f, 0.f, 0.4f);
-        }
-
-        sf::Text livesLabel(font, "LIVES:", 16);
-        livesLabel.setFillColor(sf::Color(200, 200, 200));
-        livesLabel.setPosition({WIN_W - 30.f - (float)(game.lives) * 22.f - 60.f, (float)barY + 33.f});
-        window.draw(livesLabel);
-
-        // Overlay messages
-        if (game.state == GameState::Menu) {
-            sf::RectangleShape overlay({(float)WIN_W, (float)WIN_H});
-            overlay.setFillColor(sf::Color(0, 0, 0, 160));
-            window.draw(overlay);
-
-            sf::Text title(font, "PAC-MAN", 52);
-            title.setFillColor(sf::Color::Yellow);
-            auto tb = title.getLocalBounds();
-            title.setOrigin({tb.size.x * 0.5f, tb.size.y * 0.5f});
-            title.setPosition({WIN_W * 0.5f, WIN_H * 0.35f});
-            window.draw(title);
-
-            sf::Text sub(font, "Press ENTER or SPACE to start", 22);
-            sub.setFillColor(sf::Color::White);
-            auto sb = sub.getLocalBounds();
-            sub.setOrigin({sb.size.x * 0.5f, sb.size.y * 0.5f});
-            sub.setPosition({WIN_W * 0.5f, WIN_H * 0.55f});
-            window.draw(sub);
-
-            sf::Text controls(font, "Arrow keys to move   ESC to quit", 18);
-            controls.setFillColor(sf::Color(180, 180, 180));
-            auto cb = controls.getLocalBounds();
-            controls.setOrigin({cb.size.x * 0.5f, cb.size.y * 0.5f});
-            controls.setPosition({WIN_W * 0.5f, WIN_H * 0.65f});
-            window.draw(controls);
-        }
-
-        if (game.state == GameState::Dead) {
-            sf::Text msg(font, "OUCH!", 40);
-            msg.setFillColor(sf::Color::Red);
-            auto mb = msg.getLocalBounds();
-            msg.setOrigin({mb.size.x * 0.5f, mb.size.y * 0.5f});
-            msg.setPosition({WIN_W * 0.5f, WIN_H * 0.45f});
-            window.draw(msg);
-        }
-
-        if (game.state == GameState::LevelClear) {
-            sf::Text msg(font, "LEVEL CLEAR!", 40);
-            msg.setFillColor(sf::Color::Yellow);
-            auto mb = msg.getLocalBounds();
-            msg.setOrigin({mb.size.x * 0.5f, mb.size.y * 0.5f});
-            msg.setPosition({WIN_W * 0.5f, WIN_H * 0.45f});
-            window.draw(msg);
-        }
-
-        if (game.state == GameState::GameOver) {
-            sf::RectangleShape overlay({(float)WIN_W, (float)WIN_H});
-            overlay.setFillColor(sf::Color(0, 0, 0, 160));
-            window.draw(overlay);
-
-            sf::Text msg(font, "GAME OVER", 52);
-            msg.setFillColor(sf::Color::Red);
-            auto mb = msg.getLocalBounds();
-            msg.setOrigin({mb.size.x * 0.5f, mb.size.y * 0.5f});
-            msg.setPosition({WIN_W * 0.5f, WIN_H * 0.38f});
-            window.draw(msg);
-
-            sf::Text sc(font, "Final Score: " + std::to_string(game.score), 28);
-            sc.setFillColor(sf::Color::White);
-            auto scb = sc.getLocalBounds();
-            sc.setOrigin({scb.size.x * 0.5f, scb.size.y * 0.5f});
-            sc.setPosition({WIN_W * 0.5f, WIN_H * 0.52f});
-            window.draw(sc);
-
-            sf::Text restart(font, "Press ENTER to play again", 22);
-            restart.setFillColor(sf::Color(200, 200, 200));
-            auto rb = restart.getLocalBounds();
-            restart.setOrigin({rb.size.x * 0.5f, rb.size.y * 0.5f});
-            restart.setPosition({WIN_W * 0.5f, WIN_H * 0.65f});
-            window.draw(restart);
-        }
-
-        window.display();
-    }
-
+    std::cout << "Thanks for playing TANKS!\n";
     return 0;
 }
