@@ -311,7 +311,87 @@ void updateBullets(Game& game) {
             }
         }
     }
+codex/implement-tanks-game-in-c++-rzab6e
 
+    game.bullets.erase(std::remove_if(game.bullets.begin(), game.bullets.end(), [](const Bullet& bullet) {
+        return !bullet.alive;
+    }), game.bullets.end());
+}
+
+void updateGame(Game& game, char command) {
+    if (game.state == State::Menu || game.state == State::GameOver) {
+        if (command == '\n' || command == 'p') game.start(true);
+        return;
+    }
+    if (game.state == State::WaveClear) {
+        ++game.wave;
+        game.spawnPlayer();
+        game.spawnWave();
+        game.state = State::Playing;
+        return;
+    }
+
+    game.player.reload = std::max(0, game.player.reload - 1);
+    Dir requested = game.player.dir;
+    bool moveRequested = true;
+    if (command == 'w') requested = Dir::Up;
+    else if (command == 's') requested = Dir::Down;
+    else if (command == 'a') requested = Dir::Left;
+    else if (command == 'd') requested = Dir::Right;
+    else moveRequested = false;
+
+    if (moveRequested) {
+        game.player.dir = requested;
+        Pos next = step(game.player.pos, game.player.dir);
+        if (canMoveTo(game, next, true)) game.player.pos = next;
+    } else if (command == 'f' || command == ' ') {
+        fire(game, game.player, true);
+        game.player.reload = 1;
+    }
+
+    for (auto& enemy : game.enemies) if (enemy.alive) updateEnemy(game, enemy);
+    updateBullets(game);
+    game.enemies.erase(std::remove_if(game.enemies.begin(), game.enemies.end(), [](const Enemy& enemy) {
+        return !enemy.alive;
+    }), game.enemies.end());
+
+    if (game.enemies.empty() && game.state == State::Playing) {
+        game.score += 250 * game.wave;
+        game.state = State::WaveClear;
+    }
+}
+
+std::string render(const Game& game) {
+    std::array<std::array<std::string, COLS>, ROWS> frame{};
+    for (int y = 0; y < ROWS; ++y) {
+        for (int x = 0; x < COLS; ++x) frame[y][x] = game.board.icon({x, y});
+    }
+
+    const bool showActors = game.state != State::Menu;
+    const Pos target = step(game.player.pos, game.player.dir);
+    if (showActors && game.player.alive && game.board.inside(target) && !game.board.blocksMovement(target)) {
+        frame[target.y][target.x] = targetIcon();
+    }
+    for (const auto& bullet : game.bullets) {
+        if (showActors && bullet.alive && game.board.inside(bullet.pos)) frame[bullet.pos.y][bullet.pos.x] = bulletIcon(bullet.fromPlayer);
+    }
+    for (const auto& enemy : game.enemies) {
+        if (showActors && enemy.alive) frame[enemy.pos.y][enemy.pos.x] = directionalIcon(enemy.dir, false);
+    }
+    if (showActors && game.player.alive) frame[game.player.pos.y][game.player.pos.x] = directionalIcon(game.player.dir, true);
+
+    std::string out;
+    out += "TANKS  Score: " + std::to_string(game.score) + "  Lives: " + std::to_string(game.lives) + "  Wave: " + std::to_string(game.wave) + "\n";
+    out += "Controls: W/A/S/D move and aim, F fire, P start/restart, Q quit\n";
+    out += "Legend: " + directionalIcon(Dir::Up, true) + "Player tank  " + directionalIcon(Dir::Down, false) + "Enemy tank  "
+         + targetIcon() + "Target  " + bulletIcon(true) + "Shell  "
+         + colorize("⌂ ", "1;33") + "Base  " + colorize("▓▓", "38;5;130") + "Brick  "
+         + colorize("██", "1;37") + "Steel  " + colorize("♣ ", "1;32") + "Hedge\n";
+    for (const auto& row : frame) {
+        for (const auto& cell : row) out += cell;
+        out += '\n';
+    }
+    if (game.state == State::Menu) out += "Press P to start. Protect the base icon and destroy every enemy tank.\n";
     game.bullets.erase(std::remove_if(game.bullets.begin(), game.bullets.end(), [](const Bullet& bullet) {
         return !bullet.alive;
     }), game.bullets.end());
@@ -400,6 +480,7 @@ bool selfTest() {
     expect(game.enemies.size() == 4, "wave one spawns four enemies");
     expect(lineOfSight(game.board, {1, 1}, {13, 1}), "open row has line of sight");
     expect(!lineOfSight(game.board, {1, 1}, {20, 1}), "steel column blocks line of sight");
+  
     game.player.dir = Dir::Right;
     game.player.reload = 0;
     fire(game, game.player, true);
